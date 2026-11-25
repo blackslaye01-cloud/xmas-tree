@@ -179,7 +179,7 @@ function drawAurora(t){
 }
 function drawSnowman(cx, baseY, p){
   const s = Math.min(1,p); if(s < .05) return;
-  const xm = Math.max(5, cx-27), yb = baseY+3;
+  const xm = Math.max(5, cx-24), yb = baseY+3;
   const disc = (mx,my,r) => { const rv = r*CW/CH;
     for(let y=Math.floor(my-rv);y<=Math.ceil(my+rv);y++) for(let x=Math.floor(mx-r);x<=Math.ceil(mx+r);x++){
       const dx = (x-mx)/r, dy = (y-my)/rv, dd = dx*dx+dy*dy; if(dd > 1) continue;
