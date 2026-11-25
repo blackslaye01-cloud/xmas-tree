@@ -3,231 +3,401 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>
-  html,body{margin:0;height:100%;background:#0b0d12;overflow:hidden;font-family:system-ui,sans-serif;color:#cfd6e4}
+  :root{color-scheme:dark}
+  html,body{margin:0;height:100%;background:#070a14;overflow:hidden;font-family:system-ui,-apple-system,sans-serif;color:#dbe4f5}
   #scene{position:fixed;inset:0;width:100%;height:100%}
   #cam{position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;pointer-events:none}
-  #hud{position:fixed;left:0;right:0;bottom:0;padding:10px 14px;font-size:13px;text-align:center;
-       background:linear-gradient(transparent,#000a);}
-  #start{position:fixed;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;
-         background:#0b0d12ee;z-index:5;text-align:center;padding:24px}
-  button{font-size:18px;padding:12px 28px;border-radius:999px;border:0;background:#2fbf71;color:#04210f;font-weight:700;cursor:pointer}
-  .g{opacity:.8;font-size:14px;line-height:1.7}
+  #hud{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);padding:8px 18px;
+       border-radius:999px;background:#0a0f20aa;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+       border:1px solid #ffffff26;font-size:14px;white-space:nowrap;letter-spacing:.2px}
+  #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:5;padding:20px;
+         background:radial-gradient(circle at 50% 30%,#18244aee,#050813f2)}
+  .card{max-width:360px;width:100%;text-align:center}
+  h1{margin:0 0 4px;font-size:28px;font-weight:800;letter-spacing:.5px;
+     background:linear-gradient(90deg,#7dffb0,#ffe08a,#ff8fb1);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{opacity:.65;font-size:13px;margin-bottom:18px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:18px}
+  .grid div{background:#ffffff0f;border:1px solid #ffffff1c;border-radius:14px;padding:8px 3px;font-size:11.5px;line-height:1.3}
+  .grid b{display:block;font-size:22px;margin-bottom:2px}
+  button{font-size:17px;padding:13px 30px;border-radius:999px;border:0;font-weight:700;cursor:pointer;color:#06240f;
+         background:linear-gradient(135deg,#7dffb0,#2fbf71);box-shadow:0 6px 24px #2fbf7155}
+  button:disabled{opacity:.6}
+  .note{margin-top:14px;opacity:.6;font-size:12px;line-height:1.5}
 </style>
 </head>
 <body>
 <video id="cam" playsinline muted></video>
 <canvas id="scene"></canvas>
 <div id="hud">Starting…</div>
-<div id="start">
-  <div style="font-size:26px;font-weight:700">🎄 ASCII Christmas Tree</div>
-  <div class="g">
-    ✋ Open palm (5 fingers) = grow the tree<br>
-    ☝️ 1 finger = rainbow lights<br>
-    ✌️ 2 fingers = presents<br>
-    🤟 3 fingers = reindeer<br>
-    ✊ Fist (hold) = reset<br>
-    <small>One hand only. The camera stays hidden.</small>
+<div id="start"><div class="card">
+  <h1>🎄 ASCII Christmas</h1>
+  <div class="sub">Control the tree with one hand</div>
+  <div class="grid">
+    <div><b>✋</b>Open palm<br>Grow tree</div>
+    <div><b>☝️</b>1 finger<br>Rainbow lights</div>
+    <div><b>✌️</b>2 fingers<br>Presents</div>
+    <div><b>🤟</b>3 fingers<br>Santa sleigh</div>
+    <div><b>👍</b>Thumbs up<br>Snowstorm</div>
+    <div><b>🤘</b>Rock sign<br>Fireworks</div>
+    <div><b>🤙</b>Shaka<br>Snowman</div>
+    <div><b>👌</b>OK sign<br>Aurora</div>
+    <div><b>✊</b>Fist (hold)<br>Reset</div>
   </div>
   <button id="go">Enable camera</button>
-  <div class="g" id="msg">No camera? Use the keyboard: 1 grow · 2 lights · 3 presents · 4 reindeer · 0 reset</div>
-</div>
+  <div class="note" id="msg">The camera preview stays hidden<br>Keyboard: 1 grow · 2 lights · 3 presents · 4 Santa · 5 snowstorm · 6 fireworks · 7 snowman · 8 aurora · 0 reset</div>
+</div></div>
 
 <script type="module">
 import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 const $ = id => document.getElementById(id);
-const cv = $('scene'), ctx = cv.getContext('2d');
-const video = $('cam'), hud = $('hud');
+const cv = $('scene'), ctx = cv.getContext('2d'), video = $('cam'), hud = $('hud');
 
-/* ---------- state (targets are set by gestures, values ease toward them) ---------- */
-const T = {grow:0, lights:0, gifts:0, deer:0};
-const S = {grow:0, lights:0, gifts:0, deer:0};
-let gestureName = 'none';
+/* ---------- state: gestures set targets T, visuals ease S toward them ---------- */
+const T = {grow:0, lights:0, gifts:0, deer:0, storm:0, fire:0, man:0, aurora:0};
+const S = {grow:0, lights:0, gifts:0, deer:0, storm:0, fire:0, man:0, aurora:0};
+let gestureName = 'none', frame = 0;
 
-/* ---------- scene ---------- */
-const CH = 9, CW = 6;          // cell size in px
-let cols, rows, W, H;
+/* ---------- canvas / layout ---------- */
+const CW = 7, CH = 11;
+let W, H, cols, rows, sky, stars = [];
 function resize(){
-  W = cv.width = innerWidth; H = cv.height = innerHeight;
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = W*dpr; cv.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
   cols = Math.floor(W/CW); rows = Math.floor(H/CH);
-  ctx.font = `${CH+1}px monospace`; ctx.textBaseline = 'top';
+  sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#04070f'); sky.addColorStop(.55,'#0c1430'); sky.addColorStop(1,'#1b2850');
+  stars = Array.from({length:Math.floor(W*H/8000)}, () => ({x:Math.random()*W, y:Math.random()*H*.65, p:Math.random()*6, r:Math.random()*1.3+.4}));
 }
 addEventListener('resize', resize); resize();
 
-const hash = (x,y) => { let n = Math.sin(x*127.1 + y*311.7)*43758.5453; return n - Math.floor(n); };
-const snow = Array.from({length:140}, () => ({x:Math.random(), y:Math.random(), v:.02+Math.random()*.05, c:Math.random()<.3?'*':'.'}));
+const hash = (x,y) => { const n = Math.sin(x*127.1 + y*311.7)*43758.5453; return n - Math.floor(n); };
+const hillH = (x,k) => Math.sin(x*.045+k)*1.6 + Math.sin(x*.11+k*2)*.9;
+const snow = Array.from({length:130}, () => ({x:Math.random(), y:Math.random(), z:Math.random(), c:'.*+:'[Math.random()*4|0]}));
+const snow2 = Array.from({length:220}, () => ({x:Math.random(), y:Math.random(), z:Math.random(), c:'.*+:'[Math.random()*4|0], e:true}));
+const snowAll = snow.concat(snow2);
+const spark = [];
+const emit = (x,y,n,col,spread=1) => { for(let i=0;i<n;i++) spark.push({x,y,vx:(Math.random()-.5)*1.4*spread,vy:-Math.random()*1.3-.2,l:1,c:col,ch:Math.random()<.5?'+':'*'}); };
 
-const DEER = [
- "  \\|/ \\|/   ",
- "   \\\\ //     ",
- "    (oo)__   ",
- "   /(  )__\\  ",
- "    ||  ||   "
-];
-
-function drawScene(t){
-  ctx.clearRect(0,0,W,H);
-  const topBar = Math.floor(rows*0.06);
-  const baseY = rows - 6;
-  const maxH = (baseY - topBar - 4);
-  const treeH = Math.max(0, maxH * S.grow);
-  const cx = Math.floor(cols/2) - 3;
-  const treeTop = baseY - treeH;
-  const maxW = Math.min(cols*0.42, treeH*0.62);
-
-  // snow
-  ctx.fillStyle = '#dfe8ff';
-  for (const s of snow){
-    s.y += s.v*0.016*6; s.x += Math.sin(t/900 + s.y*9)*0.0004;
-    if (s.y > 1){ s.y = 0; s.x = Math.random(); }
-    ctx.globalAlpha = .75; ctx.fillText(s.c, s.x*W, s.y*H);
-  }
-  ctx.globalAlpha = 1;
-
-  // ground
-  for (let x=0; x<cols; x++){
-    for (let y=baseY+2; y<rows; y++){
-      const h = hash(x,y);
-      if (h < (y===baseY+2 ? .75 : .35)){
-        ctx.fillStyle = `rgba(214,190,110,${.25+h*.4})`;
-        ctx.fillText(h<.5?'.':':', x*CW, y*CH);
-      }
-    }
-  }
-
-  if (S.grow > 0.02){
-    // trunk
-    for (let y=baseY; y<baseY+3; y++) for (let x=cx-1; x<=cx+1; x++){
-      ctx.fillStyle = '#6b4a2b'; ctx.fillText('#', x*CW, y*CH);
-    }
-    // tree body
-    const chars = '.:+*oO#@';
-    for (let y=Math.floor(treeTop); y<baseY; y++){
-      const tt = (y - treeTop) / Math.max(1,treeH);          // 0 top .. 1 bottom
-      const tier = (tt*4) % 1;                                // 4 tiers
-      const half = maxW * (0.08 + 0.92*tt) * (0.72 + 0.28*tier);
-      for (let x=Math.floor(cx-half); x<=Math.ceil(cx+half); x++){
-        const edge = 1 - Math.abs(x-cx)/Math.max(1,half);
-        const h = hash(x,y);
-        if (h > .35 + edge*.6) continue;
-        const lit = h < 0.07*S.lights + 0.015;
-        if (lit){
-          const hue = ((x*5 + y*9 + t*0.06) % 360);
-          ctx.fillStyle = S.lights>0.15 ? `hsl(${hue},95%,62%)` : (h<.01?'#ff4d4d':'#ffd86b');
-          ctx.fillText('@', x*CW, y*CH);
-        } else {
-          const g = 120 + Math.floor((edge*.5+h*.5)*110);
-          ctx.fillStyle = `rgb(${40+Math.floor(h*50)},${g},${70+Math.floor(h*40)})`;
-          ctx.fillText(chars[Math.min(7, Math.floor((edge*.6+h*.4)*8))], x*CW, y*CH);
-        }
-      }
-    }
-    // star
-    if (S.grow > .85){
-      const p = .6 + .4*Math.sin(t/260);
-      ctx.fillStyle = `rgba(255,224,120,${p})`;
-      ctx.fillText('*', cx*CW, (treeTop-1)*CH);
-      ctx.fillStyle = `rgba(255,224,120,${p*.5})`;
-      for (const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1],[0,-2],[0,2]]) ctx.fillText('+', (cx+dx)*CW, (treeTop-1+dy)*CH);
-    }
-  }
-
-  // presents
-  if (S.gifts > .05){
-    const cols2 = ['#e0475b','#3a7bd5','#e8b93c','#7a5cd6','#2fbf71'];
-    const n = Math.floor(5*S.gifts);
-    for (let i=0;i<n;i++){
-      const gx = cx - 14 + i*6 + (i%2), gw = 4+(i%2), gh = 2+(i%3);
-      ctx.fillStyle = cols2[i%5];
-      for (let y=0;y<gh;y++) for (let x=0;x<gw;x++) ctx.fillText(x===Math.floor(gw/2)||y===0?'+':'#', (gx+x)*CW, (baseY+3-gh+y)*CH);
-    }
-  }
-
-  // reindeer
-  if (S.deer > .05 && S.grow > .4){
-    ctx.globalAlpha = Math.min(1, S.deer);
-    ctx.fillStyle = '#ffffff';
-    const dy = Math.floor(treeTop + treeH*0.55);
-    DEER.forEach((line,i)=> ctx.fillText(line, (cx-6)*CW, (dy+i)*CH));
-    ctx.globalAlpha = 1;
-  }
+/* ---------- star on top ---------- */
+function drawStar(x,y,r,t){
+  const p = .75 + .25*Math.sin(t/220);
+  const g = ctx.createRadialGradient(x,y,1,x,y,r*4);
+  g.addColorStop(0,`rgba(255,230,140,${.55*p})`); g.addColorStop(1,'rgba(255,230,140,0)');
+  ctx.fillStyle = g; ctx.fillRect(x-r*4,y-r*4,r*8,r*8);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = `rgba(255,240,180,${.55*p})`; ctx.lineWidth = 1;
+  for(let i=0;i<4;i++){ const a = i*Math.PI/4 + t/4000;
+    ctx.beginPath(); ctx.moveTo(x-Math.cos(a)*r*3.4,y-Math.sin(a)*r*3.4); ctx.lineTo(x+Math.cos(a)*r*3.4,y+Math.sin(a)*r*3.4); ctx.stroke(); }
+  ctx.restore();
+  ctx.fillStyle = '#ffe08a'; ctx.beginPath();
+  for(let i=0;i<10;i++){ const a = -Math.PI/2 + i*Math.PI/5, rr = i%2 ? r*.45 : r;
+    ctx[i?'lineTo':'moveTo'](x+Math.cos(a)*rr, y+Math.sin(a)*rr); }
+  ctx.closePath(); ctx.fill();
 }
 
-/* ---------- gestures ---------- */
+/* ---------- Santa's sleigh: drawn smooth on a small canvas, then converted to colored ASCII ---------- */
+const SW = 192, SH = 78, SR = 17;      // SR = ASCII rows (sprite is squashed vertically to match the tall text cells)
+const sc = document.createElement('canvas'); sc.width = SW; sc.height = SR*3;
+const sx = sc.getContext('2d', {willReadFrequently:true});
+function reindeer(ox, ph, nose, col){
+  sx.save(); sx.translate(ox,26); sx.scale(.75,.75); sx.translate(0,8); sx.lineCap = sx.lineJoin = 'round';
+  sx.fillStyle = sx.strokeStyle = col; sx.lineWidth = 5.5;
+  [[56,0],[50,2.3],[30,3.1],[24,5.4]].forEach(([x,o]) => {
+    const a = Math.sin(ph+o)*.7, b = Math.cos(ph+o)*.5;
+    sx.beginPath(); sx.moveTo(x,30); sx.lineTo(x+Math.sin(a)*9,38); sx.lineTo(x+Math.sin(a)*14-3+b*3,46); sx.stroke(); });
+  sx.beginPath(); sx.ellipse(40,26,21,9,-.08,0,7); sx.fill();
+  sx.lineWidth = 9; sx.beginPath(); sx.moveTo(56,24); sx.lineTo(68,13); sx.stroke();
+  sx.beginPath(); sx.ellipse(73,12,7,5,.35,0,7); sx.fill();
+  sx.beginPath(); sx.ellipse(19,22,3.5,2.5,.6,0,7); sx.fill();
+  sx.strokeStyle = '#fff3d6'; sx.lineWidth = 3.2; sx.beginPath();
+  sx.moveTo(71,8); sx.lineTo(67,-2); sx.moveTo(68,2); sx.lineTo(62,-2); sx.moveTo(67,-2); sx.lineTo(64,-6);
+  sx.moveTo(74,8); sx.lineTo(77,-2); sx.moveTo(76,2); sx.lineTo(82,-1); sx.moveTo(77,-2); sx.lineTo(79,-7); sx.stroke();
+  sx.fillStyle = nose ? '#ff2d3d' : col; sx.beginPath(); sx.arc(79.5,13.5,3,0,7); sx.fill();
+  sx.restore();
+}
+function sleigh(){
+  sx.lineCap = sx.lineJoin = 'round';
+  sx.fillStyle = '#b8844a'; sx.beginPath(); sx.ellipse(17,37,10,11,0,0,7); sx.fill();             // gift sack
+  sx.fillStyle = '#ffd25a'; sx.fillRect(13,27,8,3);
+  sx.fillStyle = '#ff4a5a'; sx.beginPath(); sx.ellipse(46,36,11,10,0,0,7); sx.fill();             // suit
+  sx.fillStyle = '#ffd2b0'; sx.beginPath(); sx.arc(47,21,7.5,0,7); sx.fill();                     // face
+  sx.fillStyle = '#fff'; sx.beginPath(); sx.ellipse(48,27,7.5,6.5,0,0,7); sx.fill();              // beard
+  sx.fillStyle = '#e8283c'; sx.beginPath(); sx.moveTo(38,19); sx.quadraticCurveTo(38,5,48,4);
+  sx.quadraticCurveTo(54,10,57,19); sx.closePath(); sx.fill();                                    // hat
+  sx.fillStyle = '#fff'; sx.fillRect(37,16,21,4); sx.beginPath(); sx.arc(48,3,3.5,0,7); sx.fill();
+  sx.strokeStyle = '#ff4a5a'; sx.lineWidth = 5; sx.beginPath(); sx.moveTo(53,33); sx.lineTo(76,44); sx.stroke();
+  sx.fillStyle = '#9c1f2e'; sx.beginPath(); sx.moveTo(6,38); sx.quadraticCurveTo(6,58,28,58); sx.lineTo(62,58);
+  sx.quadraticCurveTo(80,58,80,32); sx.quadraticCurveTo(72,42,62,41); sx.lineTo(14,41); sx.closePath(); sx.fill();   // sleigh
+  sx.strokeStyle = '#ffd25a'; sx.lineWidth = 3; sx.beginPath();
+  sx.moveTo(14,41); sx.lineTo(62,41); sx.quadraticCurveTo(72,42,80,32);
+  sx.moveTo(4,68); sx.lineTo(66,68); sx.quadraticCurveTo(86,68,84,54);
+  sx.moveTo(20,58); sx.lineTo(20,68); sx.moveTo(52,58); sx.lineTo(52,68); sx.stroke();
+  sx.lineWidth = 2.5; sx.beginPath(); sx.moveTo(76,44); sx.lineTo(100,50); sx.lineTo(136,50); sx.stroke();   // reins
+}
+function drawSanta(t, alpha){
+  const k = Math.min(1, W/640)*.95, wd = 64*CW*k, u = (t/11000) % 1;
+  const x = -wd + (W+wd*2)*u, y = H*.07 + Math.sin(u*Math.PI*2)*H*.03 + Math.sin(t/330)*3;
+  sx.setTransform(1,0,0,1,0,0); sx.clearRect(0,0,SW,SR*3); sx.setTransform(1,0,0,CW/CH,0,0); const ph = t/105;
+  sleigh(); reindeer(64,ph+1.7,false,'#c98f58'); reindeer(112,ph,true,'#e0aa70');
+  const d = sx.getImageData(0,0,SW,SR*3).data;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x,y); ctx.scale(k,k);
+  for(let gy=0; gy<SR; gy++) for(let gx=0; gx<64; gx++){
+    let a=0, r=0, g=0, b=0;
+    for(let j=0;j<3;j++) for(let i=0;i<3;i++){ const o = ((gy*3+j)*SW + gx*3+i)*4, w = d[o+3]; a += w; r += d[o]*w; g += d[o+1]*w; b += d[o+2]*w; }
+    const q = a/2295; if(q < .12) continue;
+    ctx.fillStyle = `rgb(${r/a|0},${g/a|0},${b/a|0})`;
+    ctx.fillText(q>.75?'@':q>.5?'#':q>.3?'+':'.', gx*CW, gy*CH);
+  }
+  const nx = 171.6/3*CW, ny = 42.1*CW/3, ng = ctx.createRadialGradient(nx,ny,1,nx,ny,24);
+  ng.addColorStop(0,'rgba(255,60,70,.8)'); ng.addColorStop(1,'rgba(255,60,70,0)');
+  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = ng; ctx.fillRect(nx-24,ny-24,48,48);
+  ctx.restore();
+  const cyc = (t/1000) % 4;
+  if(cyc < 1.8){                                                    // "Ho Ho Ho!" floats up
+    ctx.save(); ctx.textAlign = 'center'; ctx.font = `bold ${Math.round(14*Math.max(.8,k))}px ui-monospace,Menlo,monospace`;
+    ctx.globalAlpha = Math.min(1,(1.8-cyc)*1.2)*alpha; ctx.fillStyle = '#ffe08a';
+    ctx.fillText('HO HO HO!', x+46/3*CW*k, y-4-cyc*10); ctx.restore();
+  }
+  if(frame%2===0) emit(x+8/3*CW*k, y+66*CW/3*k, 1, Math.random()<.5?'#ffe08a':'#bfe0ff', .6);
+}
+
+/* ---------- extra effects ---------- */
+function drawAurora(t){
+  const a = S.aurora; ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for(let x=0;x<W;x+=6){
+    const cy = H*.2 + Math.sin(x*.008+t/2600)*H*.05 + Math.sin(x*.023-t/1700)*H*.02;
+    const hh = H*(.12+.07*Math.sin(x*.015+t/1500)), hue = 165 + 95*Math.sin(x*.004+t/4200);
+    const g = ctx.createLinearGradient(0,cy-hh,0,cy+hh*.6);
+    g.addColorStop(0,`hsla(${hue},95%,60%,0)`); g.addColorStop(.55,`hsla(${hue},95%,60%,${.3*a})`); g.addColorStop(1,`hsla(${hue},95%,60%,0)`);
+    ctx.fillStyle = g; ctx.fillRect(x,cy-hh,6,hh*1.6);
+  }
+  ctx.restore();
+}
+function drawSnowman(cx, baseY, p){
+  const s = Math.min(1,p); if(s < .05) return;
+  const xm = Math.max(5, cx-27), yb = baseY+3;
+  const disc = (mx,my,r) => { const rv = r*CW/CH;
+    for(let y=Math.floor(my-rv);y<=Math.ceil(my+rv);y++) for(let x=Math.floor(mx-r);x<=Math.ceil(mx+r);x++){
+      const dx = (x-mx)/r, dy = (y-my)/rv, dd = dx*dx+dy*dy; if(dd > 1) continue;
+      const sh = 1-dd*.45-(dx+dy)*.12; ctx.fillStyle = `rgb(${200+55*sh|0},${215+40*sh|0},255)`;
+      ctx.fillText(sh>.8?'@':sh>.6?'#':sh>.4?'O':'o', x*CW, y*CH); } };
+  disc(xm,yb-3*s,3.6*s); disc(xm,yb-7*s,2.7*s); disc(xm,yb-10*s,2*s);
+  if(s < .9) return;
+  const put = (ch,x,y,c) => { ctx.fillStyle = c; ctx.fillText(ch,x*CW,y*CH); };
+  put('o',xm-1,yb-11,'#1a1a22'); put('o',xm+1,yb-11,'#1a1a22'); put('>',xm,yb-10,'#ff8a2a');
+  for(let x=xm-2;x<=xm+2;x++) put('=',x,yb-8,'#e0475b'); put('#',xm+2,yb-7,'#e0475b');
+  put('o',xm,yb-6,'#2a2a33'); put('o',xm,yb-3,'#2a2a33');
+  put('\\',xm-4,yb-8,'#8a5a30'); put('\\',xm-5,yb-9,'#8a5a30'); put('/',xm+4,yb-8,'#8a5a30'); put('/',xm+5,yb-9,'#8a5a30');
+  for(let x=xm-2;x<=xm+2;x++) put('=',x,yb-13,'#16161c');
+  for(let x=xm-1;x<=xm+1;x++){ put('=',x,yb-14,'#e0475b'); put('#',x,yb-15,'#22222a'); }
+}
+const rockets = [], fw = [];
+function fireworks(){
+  if(S.fire > .3 && frame%26 === 0) rockets.push({x:W*(.15+Math.random()*.7), y:H*.7, ty:H*(.1+Math.random()*.28), hue:Math.random()*360});
+  for(let i=rockets.length-1;i>=0;i--){ const r = rockets[i]; r.y -= 5.5;
+    emit(r.x, r.y, 1, '#ffd25a', .3); ctx.fillStyle = '#ffe9a8'; ctx.fillText('|', r.x, r.y);
+    if(r.y <= r.ty){ rockets.splice(i,1);
+      for(let j=0;j<70;j++){ const a = j/70*Math.PI*2, sp = 1.2+Math.random()*2.2*(j%2?1:.6);
+        fw.push({x:r.x,y:r.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,l:1,h:(r.hue+Math.random()*40)%360,ch:'*+.'[j%3]}); } } }
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for(let i=fw.length-1;i>=0;i--){ const p = fw[i]; p.x += p.vx; p.y += p.vy; p.vx *= .985; p.vy = p.vy*.985+.03; p.l -= .011;
+    if(p.l <= 0){ fw.splice(i,1); continue; }
+    ctx.globalAlpha = p.l; ctx.fillStyle = `hsl(${p.h},100%,65%)`; ctx.fillText(p.ch,p.x,p.y); }
+  ctx.restore();
+}
+
+/* ---------- presents: [dx, width, height, box color, ribbon color] ---------- */
+const GIFTS = [[-18,6,4,'#e0475b','#ffe08a'],[-11,5,3,'#3a7bd5','#f4f8ff'],[-5,4,2,'#2fbf71','#ff4d5e'],
+               [7,5,3,'#a15cff','#ffe08a'],[13,7,4,'#ffb43a','#d03a4a'],[20,4,2,'#35c4d6','#f4f8ff']];
+
+/* ---------- main draw ---------- */
+function drawScene(t){
+  ctx.font = `${CH}px ui-monospace,Menlo,Consolas,monospace`; ctx.textBaseline = 'top';
+  ctx.globalAlpha = 1; ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+  for(const s of stars){ ctx.globalAlpha = .3 + .7*Math.abs(Math.sin(t/900+s.p)); ctx.fillStyle = '#fff'; ctx.fillRect(s.x,s.y,s.r,s.r); }
+  ctx.globalAlpha = 1;
+  const mx = W*.82, my = H*.14, mg = ctx.createRadialGradient(mx,my,4,mx,my,70);
+  mg.addColorStop(0,'rgba(255,248,220,.85)'); mg.addColorStop(.25,'rgba(255,248,220,.22)'); mg.addColorStop(1,'rgba(255,248,220,0)');
+  ctx.fillStyle = mg; ctx.fillRect(mx-70,my-70,140,140);
+  ctx.fillStyle = '#fff6d8'; ctx.beginPath(); ctx.arc(mx,my,13,0,7); ctx.fill();
+  if(S.aurora > .02) drawAurora(t);
+
+  const baseY = rows-7, topBar = Math.floor(rows*.1), maxH = baseY-topBar-3;
+  const gr = 1 - Math.pow(1-S.grow,3);
+  const treeH = maxH*gr, cx = cols>>1, treeTop = baseY-treeH;
+  const maxW = Math.min(cols*.42, treeH*.6);
+
+  // rainbow aura behind the tree
+  if(S.lights > .02 && gr > .1){
+    const gx = cx*CW, gy = (baseY-treeH*.45)*CH, gg = ctx.createRadialGradient(gx,gy,10,gx,gy,treeH*CH*.8);
+    gg.addColorStop(0,`hsla(${(t*.02)%360},90%,60%,${.24*S.lights})`); gg.addColorStop(1,'hsla(0,0%,0%,0)');
+    ctx.fillStyle = gg; ctx.fillRect(0,0,W,H);
+  }
+
+  // far hills + near snowy ground
+  for(let x=0;x<cols;x++){
+    const fy = Math.floor(baseY-1+hillH(x,1));
+    for(let y=fy;y<rows;y++) if(hash(x,y)<.7){ ctx.fillStyle = `rgba(120,140,205,${y-fy<1?.3:.13})`; ctx.fillText(y-fy<1?'#':':',x*CW,y*CH); }
+  }
+  for(let x=0;x<cols;x++){
+    const gy = Math.floor(baseY+2+hillH(x,5)*.7);
+    for(let y=gy;y<rows;y++){ const d = y-gy, h = hash(x,y);
+      if(d===0){ ctx.fillStyle = '#f4f8ff'; ctx.fillText(h<.5?'@':'#',x*CW,y*CH); }
+      else if(h<.8){ ctx.fillStyle = `rgba(${200-d*12},${215-d*10},255,${Math.max(.15,.75-d*.07)})`; ctx.fillText(h<.4?':':'.',x*CW,y*CH); }
+    }
+  }
+
+  // tree
+  const glows = [];
+  if(S.grow > .02){
+    ctx.fillStyle = '#7a5230';
+    for(let y=baseY;y<baseY+3;y++) for(let x=cx-1;x<=cx+1;x++) ctx.fillText(y===baseY+2?':':'#',x*CW,y*CH);
+    const TIERS = 5, chars = '.:-+*o#@', balls = ['#ff4d5e','#ffd25a','#6aa8ff'];
+    for(let y=Math.floor(treeTop);y<baseY;y++){
+      const tt = (y-treeTop)/Math.max(1,treeH), tier = (tt*TIERS)%1;
+      const half = maxW*(.1+.9*tt)*(.66+.34*tier);
+      for(let x=Math.floor(cx-half);x<=Math.ceil(cx+half);x++){
+        const dx = (x-cx)/Math.max(1,half), edge = 1-Math.abs(dx), h = hash(x,y), h2 = hash(y,x);
+        if(h > .3+edge*.7) continue;
+        if(S.lights>.2 && Math.abs(tier-(.8+.08*Math.sin((x-cx)*.5)))<.1){      // gold garland
+          ctx.fillStyle = `hsl(45,100%,${55+15*Math.sin(t/200+x)}%)`; ctx.fillText('o',x*CW,y*CH); continue; }
+        if(h2 < .022 && S.lights > .1){                                          // ornaments
+          const c = balls[(x+y)%3]; ctx.fillStyle = c; ctx.fillText('O',x*CW,y*CH); glows.push([x,y,c,.22]); continue; }
+        if(h2 > .022 && h2 < .022+.08*S.lights && Math.sin(t/260+h*40) > -.4){  // rainbow lights
+          const hue = ((x*7+y*5) - t*.09) % 360, c = `hsl(${hue},100%,66%)`;
+          ctx.fillStyle = c; ctx.fillText('@',x*CW,y*CH); glows.push([x,y,`hsl(${hue},100%,60%)`,.2]); continue; }
+        const br = Math.max(0, Math.min(.99, (.35+.65*tier)*(.55+.45*edge) - dx*.12 + h*.15));
+        ctx.fillStyle = `hsl(138,55%,${14+br*44}%)`; ctx.fillText(chars[br*8|0],x*CW,y*CH);
+      }
+    }
+    if(glows.length){
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for(const [x,y,c,a] of glows){ ctx.globalAlpha = a; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x*CW+CW/2,y*CH+CH/2,7,0,7); ctx.fill(); }
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+    if(gr > .8) drawStar(cx*CW+CW/2, (treeTop-1.5)*CH, 9, t);
+    if(T.grow > S.grow+.03 && gr > .05) emit((cx+(Math.random()-.5)*Math.max(2,maxW*.3))*CW, treeTop*CH, 3, '#ffe08a');
+  }
+
+  if(S.man > .02) drawSnowman(cx, baseY, S.man);
+
+  // presents (pop in one by one, with ribbon + bow)
+  if(S.gifts > .02){
+    const sc2 = Math.min(1.2, cols/55);
+    GIFTS.forEach(([dx,w,h,c,rb],i) => {
+      const p = Math.min(1, Math.max(0, S.gifts*GIFTS.length*1.05 - i)); if(p <= 0) return;
+      const x0 = cx + Math.round(dx*sc2) - (w>>1), yb = baseY+3, shown = Math.max(1,Math.ceil(h*p));
+      for(let r=0;r<shown;r++) for(let k=0;k<w;k++){
+        const vr = k === (w>>1), hr = r === (h>>1);
+        ctx.fillStyle = vr||hr ? rb : c; ctx.fillText(vr?'|':hr?'=':'#',(x0+k)*CW,(yb-1-r)*CH); }
+      if(p > .95){ ctx.fillStyle = rb; ctx.fillText('@',(x0+(w>>1))*CW,(yb-h-1)*CH);
+                   ctx.fillText('(',(x0+(w>>1)-1)*CW,(yb-h-1)*CH); ctx.fillText(')',(x0+(w>>1)+1)*CW,(yb-h-1)*CH); }
+    });
+  }
+
+  // Santa's sleigh
+  if(S.deer > .03) drawSanta(t, Math.min(1,S.deer));
+
+  // sparkles
+  for(let i=spark.length-1;i>=0;i--){ const p = spark[i];
+    p.x += p.vx; p.y += p.vy; p.vy += .02; p.l -= .018;
+    if(p.l <= 0){ spark.splice(i,1); continue; }
+    ctx.globalAlpha = p.l; ctx.fillStyle = p.c; ctx.fillText(p.ch,p.x,p.y); }
+  fireworks();
+  // snow (varied depth); the thumbs-up snowstorm adds wind, speed and extra flakes
+  const st = S.storm; ctx.fillStyle = '#e4ecff';
+  for(const s of (st > .02 ? snowAll : snow)){
+    s.y += (.0008+.0024*s.z)*(1+st*2.8); s.x += Math.sin(t/900+s.y*9)*.0004 + st*.004*(.4+s.z);
+    if(s.y > 1){ s.y = 0; s.x = Math.random(); } if(s.x > 1) s.x -= 1;
+    ctx.globalAlpha = (.45+.45*s.z)*(s.e ? st : 1); ctx.font = `${7+s.z*6}px ui-monospace,Menlo,monospace`;
+    ctx.fillText(s.c, s.x*W, s.y*H);
+  }
+  if(st > .02){ ctx.globalAlpha = .1*st; ctx.fillStyle = '#cfdcff'; ctx.fillRect(0,0,W,H); }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- one-hand gestures ---------- */
 const d = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 function fingersUp(lm){
-  const w = lm[0];
-  const pairs = [[8,6],[12,10],[16,14],[20,18]];
-  let n = pairs.filter(([tip,pip]) => d(lm[tip],w) > d(lm[pip],w)*1.12).length;
-  const thumb = d(lm[4], lm[17]) > d(lm[3], lm[17])*1.05 && d(lm[4], lm[5]) > .06;
-  return {n, thumb, index: d(lm[8],w) > d(lm[6],w)*1.12 && n===1};
+  const w = lm[0], up = (t,p) => d(lm[t],w) > d(lm[p],w)*1.12;
+  const e = [up(8,6), up(12,10), up(16,14), up(20,18)];
+  const thumb = d(lm[4],lm[17]) > d(lm[3],lm[17])*1.05 && d(lm[4],lm[5]) > .06;
+  return {n:e.filter(Boolean).length, i:e[0], m:e[1], r:e[2], p:e[3], thumb, lm};
 }
-
 function classify(hands){
-  if (!hands.length) return 'none';
-  const f = fingersUp(hands[0]);
-  if (f.n >= 4) return 'open';
-  if (f.n === 3) return 'three';
-  if (f.n === 2) return 'two';
-  if (f.n === 1) return f.index ? 'point' : 'other';
-  if (!f.thumb) return 'fist';
-  return 'other';
+  if(!hands.length) return 'none';
+  const f = fingersUp(hands[0]), lm = f.lm, palm = d(lm[0],lm[9]);
+  if(d(lm[4],lm[8]) < palm*.32 && f.m && f.r && f.p) return 'ok';            // 👌
+  if(f.i && f.p && !f.m && !f.r) return 'rock';                              // 🤘
+  if(f.thumb && f.p && !f.i && !f.m && !f.r) return 'shaka';                 // 🤙
+  if(f.n === 0 && f.thumb && lm[4].y < lm[5].y-.03 && lm[4].y < lm[0].y-.06) return 'thumb';  // 👍
+  if(f.n >= 4) return 'open';
+  if(f.n === 3) return 'three';
+  if(f.n === 2) return 'two';
+  if(f.n === 1) return f.i ? 'point' : 'other';
+  return f.thumb ? 'other' : 'fist';
 }
-
 let fistFrames = 0, candidate = 'none', candCount = 0, stable = 'none';
 function applyGesture(raw){
-  // debounce: a gesture must hold for a few frames (avoids flicker between poses)
-  if (raw === candidate) candCount++; else { candidate = raw; candCount = 1; }
-  if (candCount >= 5) stable = candidate;
-  const g = stable;
-  gestureName = g;
-  if (g !== 'fist') fistFrames = 0;
-  if (g==='open'){ T.grow = 1; }
-  else if (g==='point'){ T.grow = 1; T.lights = 1; }
-  else if (g==='two'){ T.grow = 1; T.lights = 1; T.gifts = 1; }
-  else if (g==='three'){ T.grow = 1; T.lights = 1; T.gifts = 1; T.deer = 1; }
-  else if (g==='fist'){ if (++fistFrames > 15){ T.grow = T.lights = T.gifts = T.deer = 0; } }
+  if(raw === candidate) candCount++; else { candidate = raw; candCount = 1; }
+  if(candCount >= 5) stable = candidate;
+  const g = stable; gestureName = g;
+  if(g !== 'fist') fistFrames = 0;
+  if(g==='open') T.grow = 1;
+  else if(g==='point'){ T.grow = 1; T.lights = 1; }
+  else if(g==='two'){ T.grow = 1; T.lights = 1; T.gifts = 1; }
+  else if(g==='three'){ T.grow = 1; T.lights = 1; T.gifts = 1; T.deer = 1; }
+  else if(g==='shaka') T.man = 1;
+  else if(g==='ok') T.aurora = 1;
+  else if(g==='fist' && ++fistFrames > 15) T.grow = T.lights = T.gifts = T.deer = T.man = T.aurora = 0;
+  T.storm = g==='thumb' ? 1 : 0;      // held effects
+  T.fire = g==='rock' ? 1 : 0;
 }
 
-/* ---------- main loop ---------- */
+/* ---------- loop ---------- */
+const LABEL = {none:'👋 Show your hand', open:'✋ Growing', point:'☝️ Rainbow lights', two:'✌️ Presents', three:'🤟 Santa!', thumb:'👍 Snowstorm', rock:'🤘 Fireworks', shaka:'🤙 Snowman', ok:'👌 Aurora', fist:'✊ Hold to reset', other:'🤔 …'};
 let landmarker = null, lastVideoT = -1;
 function loop(t){
-  if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoT){
+  frame++;
+  if(landmarker && video.readyState >= 2 && video.currentTime !== lastVideoT){
     lastVideoT = video.currentTime;
-    const res = landmarker.detectForVideo(video, performance.now());
-    applyGesture(classify(res.landmarks));
+    applyGesture(classify(landmarker.detectForVideo(video, performance.now()).landmarks));
   }
-  for (const k in S) S[k] += (T[k]-S[k]) * (k==='grow'?0.035:0.06);
+  for(const k in S) S[k] += (T[k]-S[k]) * (k==='grow' ? .035 : .06);
   drawScene(t);
-  hud.textContent = (landmarker ? `Gesture: ${gestureName}` : 'Keyboard mode') +
-    `  ·  grow ${(S.grow*100|0)}%  lights ${(S.lights*100|0)}%`;
+  hud.textContent = landmarker ? LABEL[gestureName] : '⌨️ Keys 1-8 effects · 0 reset';
   requestAnimationFrame(loop);
 }
-
 addEventListener('keydown', e => {
-  if (e.key==='1') T.grow = 1;
-  if (e.key==='2'){ T.grow = 1; T.lights = 1; }
-  if (e.key==='3'){ T.grow = 1; T.gifts = 1; }
-  if (e.key==='4'){ T.grow = 1; T.deer = T.deer?0:1; }
-  if (e.key==='0'){ T.grow=T.lights=T.gifts=T.deer=0; }
+  const k = e.key;
+  if(k==='1') T.grow = 1;
+  if(k==='2'){ T.grow = 1; T.lights = 1; }
+  if(k==='3'){ T.grow = 1; T.gifts = 1; }
+  if(k==='4') T.deer = T.deer ? 0 : 1;
+  if(k==='5') T.storm = T.storm ? 0 : 1;
+  if(k==='6') T.fire = T.fire ? 0 : 1;
+  if(k==='7') T.man = T.man ? 0 : 1;
+  if(k==='8') T.aurora = T.aurora ? 0 : 1;
+  if(k==='0') for(const x in T) T[x] = 0;
 });
 
 async function startCamera(){
   $('go').disabled = true; $('msg').textContent = 'Loading hand tracker…';
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:640, height:480}, audio:false});
-    video.srcObject = stream; await video.play();
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:640, height:480}, audio:false});
+    await video.play();
     const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
     landmarker = await HandLandmarker.createFromOptions(fileset, {
       baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate:"GPU"},
-      runningMode:"VIDEO", numHands:1
-    });
+      runningMode:"VIDEO", numHands:1 });
     $('start').remove();
   } catch(err){
-    $('msg').textContent = 'Camera/tracker unavailable (' + (err.message||err) + '). Using keyboard: 1 grow · 2 lights · 3 presents · 4 reindeer · 0 reset';
-    $('go').textContent = 'Continue with keyboard';
-    $('go').disabled = false;
+    $('msg').textContent = 'Camera/tracker unavailable (' + (err.message||err) + '). You can still use the keyboard.';
+    $('go').textContent = 'Continue with keyboard'; $('go').disabled = false;
     $('go').onclick = () => $('start').remove();
   }
 }
